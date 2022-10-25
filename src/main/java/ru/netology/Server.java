@@ -77,6 +77,9 @@ public class Server {
                         request.setQuery(pathAndQuery[1]);
                     }
 
+                    System.out.println(request.getQueryParam("name"));
+                    System.out.println(request.getQueryParams());
+
                 }
             } catch (IOException ex) {
                 ex.printStackTrace();
