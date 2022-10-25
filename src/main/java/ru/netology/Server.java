@@ -50,7 +50,8 @@ public class Server {
                         continue;
                     }
 
-                    final var request = new Request(parts[0], parts[1]);
+                    final var pathAndQuery = parts[1].split("\\?");
+                    final var request = new Request(parts[0], pathAndQuery[0]);
 
                     if (!handlers.containsKey(request.getMethod())) {
                         notFound(out);
@@ -71,6 +72,10 @@ public class Server {
                     }
 
                     handler.handle(request, out);
+
+                    if (!pathAndQuery[1].equals(null)) {
+                        request.setQuery(pathAndQuery[1]);
+                    }
 
                 }
             } catch (IOException ex) {
