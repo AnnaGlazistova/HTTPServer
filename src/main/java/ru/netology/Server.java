@@ -9,16 +9,18 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
-    final static int PORT = 9999;
+    ConcurrentHashMap<String, ConcurrentHashMap<String, Handler>> handlers = new ConcurrentHashMap();
 
-    public void start() {
+    public void listen(int port) {
         final ExecutorService threadPool = Executors.newFixedThreadPool(64);
-        try (final var serverSocket = new ServerSocket(PORT)) {
+        try (final var serverSocket = new ServerSocket(port)) {
             while (true) {
                 try {
                     final var socket = serverSocket.accept();
@@ -33,7 +35,6 @@ public class Server {
     }
 
     public void connection(Socket socket, ExecutorService threadPool) {
-        final var validPaths = List.of("/index.html", "/spring.svg", "/spring.png", "/resources.html", "/styles.css", "/app.js", "/links.html", "/forms.html", "/classic.html", "/events.html", "/events.js");
 
         threadPool.submit(() -> {
             try (
@@ -41,64 +42,66 @@ public class Server {
                     final var out = new BufferedOutputStream(socket.getOutputStream());
             ) {
                 while (true) {
-                    // read only request line for simplicity
-                    // must be in form GET /path HTTP/1.1
                     final var requestLine = in.readLine();
                     final var parts = requestLine.split(" ");
 
                     if (parts.length != 3) {
-                        // just close socket
+                        badRequest(out);
                         continue;
                     }
 
-                    final var path = parts[1];
-                    if (!validPaths.contains(path)) {
-                        out.write((
-                                "HTTP/1.1 404 Not Found\r\n" +
-                                        "Content-Length: 0\r\n" +
-                                        "Connection: close\r\n" +
-                                        "\r\n"
-                        ).getBytes());
-                        out.flush();
-                        continue;
+                    final var request = new Request(parts[0], parts[1]);
+
+                    if (!handlers.containsKey(request.getMethod())) {
+                        notFound(out);
+                        return;
                     }
 
-                    final var filePath = Path.of(".", "public", path);
-                    final var mimeType = Files.probeContentType(filePath);
+                    var methodHandlers = handlers.get(request.getMethod());
 
-                    // special case for classic
-                    if (path.equals("/classic.html")) {
-                        final var template = Files.readString(filePath);
-                        final var content = template.replace(
-                                "{time}",
-                                LocalDateTime.now().toString()
-                        ).getBytes();
-                        out.write((
-                                "HTTP/1.1 200 OK\r\n" +
-                                        "Content-Type: " + mimeType + "\r\n" +
-                                        "Content-Length: " + content.length + "\r\n" +
-                                        "Connection: close\r\n" +
-                                        "\r\n"
-                        ).getBytes());
-                        out.write(content);
-                        out.flush();
-                        continue;
+                    if (!methodHandlers.containsKey(request.getPath())) {
+                        notFound(out);
+                        return;
+                    }
+                    var handler = methodHandlers.get(request.getPath());
+
+                    if (handler == null) {
+                        notFound(out);
+                        return;
                     }
 
-                    final var length = Files.size(filePath);
-                    out.write((
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Content-Type: " + mimeType + "\r\n" +
-                                    "Content-Length: " + length + "\r\n" +
-                                    "Connection: close\r\n" +
-                                    "\r\n"
-                    ).getBytes());
-                    Files.copy(filePath, out);
-                    out.flush();
+                    handler.handle(request, out);
+
                 }
             } catch (IOException ex) {
                 ex.printStackTrace();
             }
         });
+    }
+
+    private void notFound(BufferedOutputStream out) throws IOException {
+        out.write((
+                "HTTP/1.1 404 Not Found\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n"
+        ).getBytes());
+        out.flush();
+    }
+
+    private void badRequest(BufferedOutputStream out) throws IOException {
+        out.write((
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n"
+        ).getBytes());
+        out.flush();
+    }
+
+    public void addHandler(String method, String path, Handler handler) {
+        if (!handlers.contains(method))
+            handlers.putIfAbsent(method, new ConcurrentHashMap<String, Handler>());
+        handlers.get(method).put(path, handler);
     }
 }
